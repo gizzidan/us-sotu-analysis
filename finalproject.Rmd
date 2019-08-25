@@ -1,0 +1,227 @@
+---
+title: "Text Mining Project"
+author: "William D. Gizzi"
+date: "12/12/2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(devtools)
+library(ggthemes)
+library(ggplotify)
+install_github('mananshah99/sentR')
+require('sentR')
+require('tm')
+library(syuzhet)
+library(tm)
+library(wordcloud)
+library(ggsci)
+library(ggplot2)
+```
+
+
+
+## General Analysis
+
+
+```{r}
+
+# function to get top 10 words
+
+top_10 <- function(file_name) {
+  cname <- file.path(file_name)   
+  docs <- VCorpus(DirSource(cname))   
+  docs <-tm_map(docs, removePunctuation)   
+  docs <-tm_map(docs,content_transformer(tolower))
+  docs <-tm_map(docs, removeNumbers)
+  docs <-tm_map(docs, removeWords, stopwords("english"))
+  docs <-tm_map(docs, stripWhitespace)
+  tdm <-TermDocumentMatrix(docs)
+  options(encoding="utf-8")
+  tdm <-TermDocumentMatrix(docs, control = list(wordLengths = c(3,10))) 
+  tdm <-as.matrix(tdm)
+  N<-10
+  v <-sort(rowSums(tdm), decreasing=TRUE)
+  class(v) #this is a numeric class
+  head(v, N) #this is a numeric class. Gives top 10
+}
+```
+
+
+```{r}
+top_10_all <- as.data.frame(top_10("sotu")) # turn into dataframe
+colnames(top_10_all) <- c("count") 
+top_10_all$word<-row.names(top_10_all)
+
+
+```
+```{r}
+# plot word count
+ggplot(data=top_10_all, aes(x=word, y=count)) + 
+    geom_bar(stat="identity") + 
+    labs(title="Most Popular Words", subtitle="From State of the Union Addresses", x="Word", y="Count") + 
+    theme_few(base_size = 13) + scale_fill_few("Light") +
+    theme(axis.text.x = element_text(angle = 33, hjust = 1))
+```
+
+
+
+```{r}
+
+# do top 10 for each century
+
+top_10("1700s")
+top_10("1800s")
+top_10("1900s")
+top_10("2000s")
+```
+
+
+```{r}
+
+# do same as above, but for trump and obama instead of century.
+
+trump <- as.data.frame(top_10("trump"))
+colnames(trump) <- c("count")
+trump$word<-row.names(trump)
+
+ggplot(data=trump, aes(x=word, y=count, fill=count)) + 
+    geom_bar(stat="identity") + 
+    labs(title="Most Popular Words", subtitle="From Donald Trump's State of the Union Addresses", x="Word", y="Count") + 
+    theme_few(base_size = 13) + scale_fill_continuous_tableau("Red")
+
+obama <- as.data.frame(top_10("obama"))
+colnames(obama) <- c("count")
+obama$word<-row.names(obama)
+
+ggplot(data=obama, aes(x=word, y=count, fill=count)) + 
+    geom_bar(stat="identity") + 
+    labs(title="Most Popular Words", subtitle="From Barack Obama's State of the Union Addresses", x="Word", y="Count") + 
+    theme_few(base_size = 13) + scale_fill_continuous_tableau("Blue")
+
+```
+
+## Text Network
+
+Ok, Let's build a network of words and see how it changes with each century (1700s 1800s, 1900s ,2000s)
+
+```{r}
+library(igraph)# build adjacency graph
+
+text_network <- function(file_name) {
+  cname <- file.path("~", "Desktop", file_name)
+  # build corpus, clean, make tdm
+  docs <- VCorpus(DirSource(cname))   
+  docs <-tm_map(docs, removePunctuation)   
+  docs <-tm_map(docs,content_transformer(tolower))
+  docs <-tm_map(docs, removeNumbers)
+  docs <-tm_map(docs, removeWords, stopwords("english"))
+  docs <-tm_map(docs, stripWhitespace)
+  tdm <-TermDocumentMatrix(docs)
+  options(encoding="utf-8")
+  tdm <-TermDocumentMatrix(docs, control = list(wordLengths = c(3,10))) # limit to words 3 to 10 length
+  tdm <-as.matrix(tdm)
+  tdm.sample<-tdm[order(rowSums(tdm),decreasing=T),]
+  tdm.sample<-tdm.sample[1:100,] # get top 100
+  tdm.sample# compute dimensions of matrix
+  dim(tdm.sample)# to boolean matrix  (convert frequency of occurence to 1,0)
+  tdm.sample[tdm.sample>=1] <-1
+  tdm.adj <-tdm.sample %*% t(tdm.sample)
+  g <-graph.adjacency(tdm.adj, weighted=TRUE, mode="undirected")
+  g <-simplify(g)
+  plot(g, edge.width=0.06,
+     edge.arrow.size=.1,
+     main = file_name,
+     vertex.label.color="black",
+     vertex.label.cex=.8,
+     vertex.size = 2,
+     layout = layout.lgl,
+     vertex.color = "red",
+     vertex.label.dist=1,
+     rescale=T, asp=9/16)
+  V(g)$label <-V(g)$name
+  V(g)$degree <-degree(g)
+}
+
+```
+
+```{r}
+# build network for each century
+
+text_network("1700s")
+text_network("1800s")
+text_network("1900s")
+text_network("2000s")
+```
+
+## Sentiment Analysis
+
+```{r}
+text2csv <- function(directory, csv_name) {  
+  # Get the names of all the txt files (and only txt files)
+  myfiles <- list.files(directory, full.names = TRUE, pattern = "*.txt")
+  
+  # Read the actual contexts of the text files into R and rearrange a little.
+  
+  # create a list of dataframes containing the text
+  mytxts <- lapply(myfiles, readLines)
+  
+  # combine the rows of each dataframe to make one
+  # long character vector where each item in the vector
+  # is a single text file
+  mytxt1lines = list()
+  for (i in 1:length(mytxts)) {
+    temp <- paste(unlist(mytxts[i]), sep=" ", collapse=" ")
+    mytxt1lines[i] <- temp
+  }
+  mytxt1lines <- unlist(mytxt1lines)
+  myfiles <- basename(myfiles)
+  
+  # make a dataframe with the file names and texts
+  mytxtsdf <- data.frame(name = myfiles,text = mytxt1lines)
+  
+  # write the CSV file...
+  write.csv(mytxtsdf, file = csv_name)
+}
+
+# make one for all files, and then one for each century
+text2csv("sotu","sotu.csv")
+text2csv("1700s","1700s.csv")
+text2csv("1800s","1800s.csv")
+text2csv("1900s","1900s.csv")
+text2csv("2000s","2000s.csv")
+
+
+```
+
+
+
+```{r}
+
+# function to get sentiment 
+get_nrc_counts <- function(file, century) {
+  text <- read_csv(file)
+  names <- text$name
+  speeches <- tolower(text$text)
+  nrc <- get_sentiment(speeches, method="nrc")
+  emotions <- get_nrc_sentiment(speeches) # get the emotion of each word
+  emo_bar = colSums(emotions)/sum(emotions) # sum all counts and get percentage of each emotion
+  emo_sum = data.frame(count=emo_bar, emotion=names(emo_bar))
+  emo_sum$emotion = factor(emo_sum$emotion, levels=emo_sum$emotion[order(emo_sum$count,decreasing = TRUE)])
+  emo_sum$century <- rep(century, length(emo_sum))
+  return(emo_sum)
+}
+
+emo_sum_1700 <- get_nrc_counts("1700s.csv", "1700s")
+emo_sum_1800 <- get_nrc_counts("1900s.csv", "1800s")
+emo_sum_1900 <- get_nrc_counts("1900s.csv", "1900s")
+emo_sum_2000 <- get_nrc_counts("2000s.csv", "2000s")
+
+complete = rbind(emo_sum_1700, emo_sum_1800, emo_sum_1900, emo_sum_2000)
+ggplot(data=complete, aes(x=emotion, y=count, fill=century)) + 
+    geom_bar(stat="identity", position="dodge") + 
+    labs(title="State of the Union Sentiment", subtitle="By Century", x="Emotion", y="Count") + 
+    theme_few(base_size = 13) + scale_fill_few("Light")
+
+```
+
